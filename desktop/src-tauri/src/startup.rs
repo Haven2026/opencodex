@@ -828,10 +828,43 @@ fn finish(app: &AppHandle, started: Instant, endpoint: ProxyEndpoint) {
     progress.dashboard = Some(dashboard.clone());
     emit(app, progress, None);
     if let Some(window) = app.get_webview_window("main") {
-        // justified: replacing the bootstrap page with the dashboard is how this window has always
-        // navigated, and the string is a URL this process resolved, not anything a page supplied.
-        let _ = window.eval(format!("window.location.replace({dashboard:?})"));
+        let visible = window.is_visible().unwrap_or(true);
+        if loads_dashboard_on_ready(LaunchOrigin::detect(), visible) {
+            navigate_dashboard(&window, &dashboard);
+        }
     }
+}
+
+/// Open the full dashboard only when a person asks for it.
+///
+/// A hidden login launch deliberately leaves its WebView on the tiny bundled startup surface after
+/// the runtime becomes ready. The tray, a second ordinary application launch, or the bootstrap
+/// command reaches this function and pays the dashboard cost at that point. If startup is still in
+/// progress the bootstrap is merely shown; `finish` observes the now-visible window and performs
+/// the navigation once the endpoint is ready.
+pub fn open_dashboard(app: &AppHandle) {
+    let dashboard = app.try_state::<Startup>().and_then(|startup| {
+        let progress = startup.latest();
+        (progress.phase == Phase::Ready.id())
+            .then_some(progress.dashboard)
+            .flatten()
+    });
+    if let Some(window) = app.get_webview_window("main") {
+        if let Some(dashboard) = dashboard {
+            navigate_dashboard(&window, &dashboard);
+        }
+        crate::window::show(&window);
+    }
+}
+
+fn loads_dashboard_on_ready(origin: LaunchOrigin, window_visible: bool) -> bool {
+    origin == LaunchOrigin::User || window_visible
+}
+
+fn navigate_dashboard(window: &tauri::WebviewWindow, dashboard: &str) {
+    // justified: replacing the bootstrap page with the dashboard is how this window has always
+    // navigated, and the string is a URL this process resolved, not anything a page supplied.
+    let _ = window.eval(format!("window.location.replace({dashboard:?})"));
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -925,8 +958,8 @@ fn elapsed(started: Instant) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        shows_window, unavailable, LaunchOrigin, Phase, Progress, Startup, AUTOSTART_FLAG,
-        DEADLINE, PHASES, POLL,
+        loads_dashboard_on_ready, shows_window, unavailable, LaunchOrigin, Phase, Progress,
+        Startup, AUTOSTART_FLAG, DEADLINE, PHASES, POLL,
     };
     use crate::tray_availability::TrayAvailability;
     use tokio::time::Duration;
@@ -1005,6 +1038,14 @@ mod tests {
             LaunchOrigin::User,
             TrayAvailability::Unavailable
         ));
+    }
+
+    #[test]
+    fn only_a_hidden_login_launch_defers_the_full_dashboard() {
+        assert!(loads_dashboard_on_ready(LaunchOrigin::User, false));
+        assert!(loads_dashboard_on_ready(LaunchOrigin::User, true));
+        assert!(loads_dashboard_on_ready(LaunchOrigin::Autostart, true));
+        assert!(!loads_dashboard_on_ready(LaunchOrigin::Autostart, false));
     }
 
     #[test]
