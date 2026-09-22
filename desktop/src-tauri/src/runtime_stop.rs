@@ -11,10 +11,10 @@
 //! human output on stderr, and this consumes the outcome and the exit code rather than inferring
 //! either. A stop that did not end in exit 0 with the runtime down is a stop that did not happen.
 
+use crate::bundled_cli;
 use serde::Deserialize;
 use std::time::Duration;
 use tauri::AppHandle;
-use tauri_plugin_shell::ShellExt;
 use tokio::time::{timeout_at, Instant};
 
 /// The wire version this shell understands.
@@ -185,7 +185,7 @@ pub fn read(exit_code: Option<i32>, stdout: &[u8], stderr: &[u8]) -> StopResult 
 
 /// Run the bundled `ocx stop --json`, under the caller's deadline.
 pub async fn run(app: &AppHandle, deadline: Instant) -> StopResult {
-    let command = match app.shell().sidecar("ocx") {
+    let command = match bundled_cli::command(app) {
         Ok(command) => command.args(["stop", "--json"]),
         Err(error) => {
             return StopResult::Failed(format!("the bundled CLI could not be started ({error})"))

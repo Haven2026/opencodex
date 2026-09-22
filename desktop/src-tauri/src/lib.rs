@@ -1,4 +1,5 @@
 mod auth;
+mod bundled_cli;
 mod endpoint;
 mod exit;
 mod first_run;

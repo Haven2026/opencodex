@@ -13,11 +13,10 @@
 //! will not parse, a schema this shell does not know — folds into the same unknown, because the one
 //! reading that must never happen is "the resolve failed, so nobody must be listening".
 
-use crate::endpoint::ProxyEndpoint;
+use crate::{bundled_cli, endpoint::ProxyEndpoint};
 use serde::Deserialize;
 use std::path::PathBuf;
 use tauri::AppHandle;
-use tauri_plugin_shell::ShellExt;
 use tokio::time::{timeout_at, Instant};
 
 /// The wire version this shell understands. A document announcing anything else is unknown.
@@ -208,7 +207,7 @@ pub fn read(exit_code: Option<i32>, stdout: &[u8], stderr: &[u8]) -> Resolution 
 
 /// Ask the bundled CLI, under the caller's deadline.
 pub async fn run(app: &AppHandle, deadline: Instant) -> Resolution {
-    let command = match app.shell().sidecar("ocx") {
+    let command = match bundled_cli::command(app) {
         Ok(command) => command.args(["resolve", "--json"]),
         Err(error) => {
             return Resolution::Unknown(format!("the bundled CLI could not be started ({error})"))

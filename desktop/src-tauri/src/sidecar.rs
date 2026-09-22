@@ -9,16 +9,13 @@
 //! Stopping it is not here. D4 gives that to the bundled `ocx stop`, which owns the receipt-backed
 //! teardown this process cannot perform on itself; see `runtime_stop.rs`.
 
-use crate::endpoint::ProxyEndpoint;
+use crate::{bundled_cli, endpoint::ProxyEndpoint};
 use std::{
     collections::VecDeque,
     sync::{Arc, Mutex},
 };
 use tauri::{async_runtime::Receiver, AppHandle, Manager};
-use tauri_plugin_shell::{
-    process::{CommandChild, CommandEvent},
-    ShellExt,
-};
+use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 /// How much sidecar output the diagnostic keeps. Enough to carry a stack trace or a startup
 /// refusal, bounded so a chatty runtime cannot grow the buffer for the life of the process.
 const MAX_LINES: usize = 40;
@@ -146,10 +143,7 @@ pub fn start(
         .map_err(|error| error.to_string())?
         .join("gui")
         .join("dist");
-    let command = app
-        .shell()
-        .sidecar("ocx")
-        .map_err(|error| error.to_string())?
+    let command = bundled_cli::command(app)?
         .args(["start", "--port", &endpoint.port.to_string()])
         .env("OPENCODEX_GUI_DIST", gui_dist);
     let (events, child) = command.spawn().map_err(|error| error.to_string())?;

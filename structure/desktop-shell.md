@@ -195,6 +195,42 @@ marker, which the GUI detects to identify the shell without using IPC.
 
 ## Release packaging and updater
 
+### Linux packaged-shell acceptance
+
+The ordinary hosted Linux lane builds both AppImage and deb bundles with updater artifacts disabled,
+extracts each payload into a disposable directory, and boots its real application executable under a
+private Xvfb, Openbox, and D-Bus session. Openbox supplies only the window-manager close protocol;
+it does not supply a tray host. `desktop/scripts/linux-packaged-e2e.ts` gives each format fresh
+`HOME`, `XDG_*`, `CODEX_HOME`, and `OPENCODEX_HOME` roots plus a reserved loopback port, then
+requires a visible OpenCodex window,
+the bundled sidecar's matching `/healthz` identity and version, and confirmed app plus runtime exit
+after closing the only window in a session with no tray host. Its report records readiness time and
+whole app-process-tree RSS as evidence; those observations are not pass/fail budgets until a reviewed
+cross-platform baseline exists.
+
+Extraction is intentional. A GitHub-hosted runner is disposable but its package database is still a
+shared job resource, and a normal pull request does not need passwordless package installation or GUI
+elevation to prove that the packaged executable and resources boot together. The separate
+`desktop-installed-gate.yml` remains the authority for real installation, package-manager ownership,
+takeover consent, elevation cancellation/acceptance, and in-place updater behavior on explicitly
+approved disposable GUI runners. Passing the hosted lane must never be described as passing those
+privileged installation flows.
+
+Linux carries the standalone Bun `ocx` executable as `sidecar/ocx` in the Tauri resource tree and
+launches that trusted absolute resource path through the shell plugin. It is intentionally not a
+Tauri `externalBin` on Linux: linuxdeploy's GTK dependency pass applies `patchelf` to external
+binaries, and the resulting `$ORIGIN/../lib` RUNPATH makes Bun's self-contained executable crash
+before the CLI can answer. macOS and Windows retain `externalBin`, where Tauri's target-suffixed
+sidecar resolution is the appropriate packaging path.
+
+AppImage and deb are also built with independent `CARGO_TARGET_DIR` roots in hosted acceptance and
+release jobs, then copied into a read-only staging layout for verification and collection. Tauri
+patches a per-format updater marker into the release binary while bundling; sharing one Cargo target
+lets one format observe a binary mutated for the other. The isolated roots make the marker and every
+other bundler mutation format-local.
+
+> Decision record: [ADR-5493](decisions/ADR-5493-linux-packaged-shell-acceptance.md)
+
 The release workflow packages the desktop shell as `OpenCodex-<version>-macos.dmg`,
 `OpenCodex-<version>-windows-x64.msi`, `OpenCodex-<version>-linux-x86_64.AppImage`, and
 `OpenCodex-<version>-linux-amd64.deb`. Each artifact is collected with a `.sha256` file;

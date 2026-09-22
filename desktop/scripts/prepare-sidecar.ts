@@ -1,5 +1,5 @@
-import { copyFileSync, cpSync, existsSync, mkdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 
 const targetByTriple: Record<string, string> = {
   "aarch64-apple-darwin": "bun-darwin-arm64",
@@ -53,7 +53,12 @@ const binaries = join(desktopRoot, "src-tauri", "binaries");
 const resources = join(desktopRoot, "src-tauri", "resources", "gui", "dist");
 mkdirSync(binaries, { recursive: true });
 mkdirSync(resources, { recursive: true });
-const destination = join(binaries, `ocx-${triple}${target.startsWith("bun-windows-") ? ".exe" : ""}`);
+const linuxResource = join(desktopRoot, "src-tauri", "resources", "sidecar", "ocx");
+const destination = target.startsWith("bun-linux-")
+  ? linuxResource
+  : join(binaries, `ocx-${triple}${target.startsWith("bun-windows-") ? ".exe" : ""}`);
+mkdirSync(dirname(destination), { recursive: true });
 copyFileSync(executable, destination);
+if (target.startsWith("bun-linux-")) chmodSync(destination, 0o755);
 cpSync(join(repoRoot, "gui", "dist"), resources, { recursive: true });
 console.log(`Prepared ${destination}`);
