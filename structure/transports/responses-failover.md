@@ -166,7 +166,9 @@ When a serving-route change leaves a tool-bearing history whose reasoning has ne
 usable opaque content, a target that requires plaintext reasoning replay is ineligible. Failover
 continues to the next target; exhausting the eligible targets returns `400 target_incompatible`.
 Opaque reasoning minted by another provider or account is never forwarded, and plaintext is never
-fabricated.
+fabricated. A tool-call turn with no reasoning item at all has nothing to strip; for such a target
+`sanitizeReasoningInputContent` prepends the #5421 placeholder (`reasoning_text: " "`, the value the chat
+`requiresReasoningPlaceholderModels` fallback injects): it replays "no reasoning", not a chain.
 
 ## Combo streaming commit boundary
 

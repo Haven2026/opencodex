@@ -42,6 +42,54 @@ function plaintextReasoningBackfill(rec: Record<string, unknown>): unknown[] {
   return fromSummary.length > 0 ? fromSummary : [{ type: "reasoning_text", text: " " }];
 }
 
+function isToolCallItem(item: unknown): boolean {
+  return isPlainObject(item)
+    && (item.type === "function_call" || item.type === "local_shell_call" || item.type === "custom_tool_call");
+}
+
+function isAssistantTurnItem(item: unknown): boolean {
+  return isPlainObject(item) && (
+    item.type === "reasoning"
+    || isToolCallItem(item)
+    || (item.type === "message" && item.role === "assistant")
+  );
+}
+
+/**
+ * Turn-level counterpart of `plaintextReasoningBackfill`: a strict plaintext-replay destination
+ * also 400s (`The reasoning_text in the thinking mode must be passed back to the API`) when an
+ * assistant tool-call turn carries no reasoning item at all — a step the model answered without
+ * thinking, replayed through a translated ingress (`/v1/messages`) or produced on a route that
+ * does not require replay. Prepend the same minimal placeholder the per-item backfill and the
+ * chat adapter's `requiresReasoningPlaceholderModels` fallback already emit (#5421): it replays
+ * "no reasoning happened" rather than inventing a chain. Every tool-call turn is covered, not only
+ * those after the last user message, matching the chat adapter and keeping the serialized prefix
+ * stable across user turns.
+ */
+function backfillToolCallTurnReasoning(input: unknown[]): unknown[] {
+  const out: unknown[] = [];
+  let turn: unknown[] = [];
+  let inserted = false;
+  const flushTurn = () => {
+    if (turn.some(isToolCallItem) && !turn.some(item => isPlainObject(item) && item.type === "reasoning")) {
+      out.push({ type: "reasoning", summary: [], content: [{ type: "reasoning_text", text: " " }] });
+      inserted = true;
+    }
+    out.push(...turn);
+    turn = [];
+  };
+  for (const item of input) {
+    if (isAssistantTurnItem(item)) {
+      turn.push(item);
+      continue;
+    }
+    flushTurn();
+    out.push(item);
+  }
+  flushTurn();
+  return inserted ? out : input;
+}
+
 /**
  * Sanitize reasoning input by field policy, not by preserving each item's shape. Retaining a
  * native `encrypted_content` guarantees only that blob value: `status` is always removed;
@@ -75,7 +123,8 @@ export function sanitizeReasoningInputContent(
      * The destination documents a strict plaintext-replay contract (DeepSeek's Responses
      * thinking mode): every reasoning input item must carry `reasoning_text` content.
      * An item left with none is backfilled from its summary, or with a minimal
-     * placeholder, rather than emitted in the shape the upstream 400s on.
+     * placeholder, rather than emitted in the shape the upstream 400s on. A tool-call turn
+     * with no reasoning item at all gains a placeholder item for the same reason.
      */
     requirePlaintextReasoning?: boolean;
   },
@@ -153,6 +202,10 @@ export function sanitizeReasoningInputContent(
     return next;
   });
 
+  if (opts?.requirePlaintextReasoning === true) {
+    const withTurnReasoning = backfillToolCallTurnReasoning(input);
+    if (withTurnReasoning !== input) return { ...raw, input: withTurnReasoning };
+  }
   return changed ? { ...raw, input } : body;
 }
 

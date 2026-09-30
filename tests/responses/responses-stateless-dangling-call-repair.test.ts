@@ -18,7 +18,11 @@ import { acquireOwnedSpendHome } from "../helpers/owned-spend-home";
 const MODEL = "deepseek-v4-flash";
 let releaseSpendHome: (() => void) | undefined;
 
-function deepseekProvider(): ReturnType<typeof providerConfigSeed> & { apiKey: string } {
+function isTurnReasoningPlaceholder(item: unknown): boolean {
+  return JSON.stringify(item) === JSON.stringify({ type: "reasoning", summary: [], content: [{ type: "reasoning_text", text: " " }] });
+}
+
+function deepseekProvider():ReturnType<typeof providerConfigSeed> & { apiKey: string } {
   return { ...providerConfigSeed(getProviderRegistryEntry("deepseek")!), apiKey: "sk-test" };
 }
 
@@ -52,7 +56,14 @@ describe("stateless Responses wire repairs orphaned tool calls", () => {
       config,
       { model: "", provider: "" },
     );
-    return requests[0] ?? { url: "", body: {} };
+    const sent = requests[0] ?? { url: "", body: {} };
+    // DeepSeek also gets a placeholder reasoning item on every tool-call turn that carries none
+    // (pinned in tests/providers/deepseek-reasoning-replay.test.ts); this file pins call/output
+    // pairing, so assert on the input without those placeholders.
+    if (Array.isArray(sent.body.input)) {
+      sent.body.input = sent.body.input.filter(item => !isTurnReasoningPlaceholder(item));
+    }
+    return sent;
   }
 
   test("synthesizes a function_call_output after a dangling function_call", async () => {

@@ -423,7 +423,10 @@ describe("the inbound scope survives the handleResponses replay", () => {
         { inboundTransport: "websocket" },
       );
       await followup.text();
+      // The follow-up replays the call without its reasoning item, which DeepSeek's thinking mode
+      // rejects, so the turn is sent with the minimal reasoning placeholder.
       expect(requestBodies[1]?.input).toEqual([
+        { type: "reasoning", summary: [], content: [{ type: "reasoning_text", text: " " }] },
         { type: "function_call", call_id: "call_ws", name: "probe", arguments: "{\"text\":\"OK\"}" },
         { type: "function_call_output", call_id: "call_ws", output: "OK" },
       ]);

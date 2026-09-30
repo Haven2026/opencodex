@@ -160,6 +160,94 @@ describe("sanitizeReasoningInputContent plaintext-required replay (#5421)", () =
   });
 });
 
+describe("sanitizeReasoningInputContent plaintext-required replay: tool-call turn with no reasoning item", () => {
+  // DeepSeek's thinking mode 400s with the same `reasoning_text ... must be passed back` message when
+  // a tool-call turn carries no reasoning item at all — a step answered without thinking and replayed
+  // through a translated ingress. The per-item backfill above has nothing to repair there.
+  const placeholder = { type: "reasoning", summary: [], content: [{ type: "reasoning_text", text: " " }] };
+  const user = { type: "message", role: "user", content: [{ type: "input_text", text: "time?" }] };
+  const call = (id: string) => ({ type: "function_call", call_id: id, name: "get_time", arguments: "{}" });
+  const output = (id: string) => ({ type: "function_call_output", call_id: id, output: "12:00" });
+  // The options the passthrough serializer sends for a plaintext-replay destination.
+  const strict = { preserveRawReasoningContent: true, requirePlaintextReasoning: true };
+
+  test("a tool-call turn without reasoning gains a placeholder item before its call", () => {
+    const out = inputOf(sanitizeReasoningInputContent(
+      { model: "m", input: [user, call("call_1"), output("call_1")] },
+      strict,
+    ));
+    expect(out).toEqual([user, placeholder, call("call_1"), output("call_1")]);
+  });
+
+  test("a turn that already carries reasoning is not given a second item", () => {
+    const reasoning = { type: "reasoning", summary: [], content: [{ type: "reasoning_text", text: "real chain" }] };
+    const body = { model: "m", input: [user, reasoning, call("call_1"), output("call_1")] };
+    expect(sanitizeReasoningInputContent(body, strict)).toBe(body);
+  });
+
+  test("the flag is off by default: the same body is returned unchanged", () => {
+    const body = { model: "m", input: [user, call("call_1"), output("call_1")] };
+    expect(sanitizeReasoningInputContent(body)).toBe(body);
+    expect(sanitizeReasoningInputContent(body, { preserveRawReasoningContent: true })).toBe(body);
+  });
+
+  test("across several turns only the ones missing reasoning are backfilled", () => {
+    const reasoning = { type: "reasoning", summary: [], content: [{ type: "reasoning_text", text: "real chain" }] };
+    const assistantText = { type: "message", role: "assistant", content: [{ type: "output_text", text: "checking" }] };
+    const out = inputOf(sanitizeReasoningInputContent(
+      {
+        model: "m",
+        input: [
+          user, reasoning, call("call_1"), output("call_1"),
+          assistantText, call("call_2"), call("call_3"), output("call_2"), output("call_3"),
+          user, call("call_4"), output("call_4"),
+        ],
+      },
+      strict,
+    ));
+    expect(out).toEqual([
+      user, reasoning, call("call_1"), output("call_1"),
+      placeholder, assistantText, call("call_2"), call("call_3"), output("call_2"), output("call_3"),
+      user, placeholder, call("call_4"), output("call_4"),
+    ]);
+  });
+
+  test("an assistant message without a tool call is not given reasoning", () => {
+    const assistantText = { type: "message", role: "assistant", content: [{ type: "output_text", text: "hi" }] };
+    const body = { model: "m", input: [user, assistantText, user] };
+    expect(sanitizeReasoningInputContent(body, strict)).toBe(body);
+  });
+
+  function buildWireInput(provider: OcxProviderConfig): Record<string, unknown>[] {
+    const built = createResponsesPassthroughAdapter(provider).buildRequest({
+      modelId: "deepseek-v4-flash",
+      context: { messages: [] },
+      stream: true,
+      options: {},
+      _rawBody: {
+        model: "deepseek-v4-flash",
+        tools: [{ type: "function", name: "get_time", parameters: { type: "object" } }],
+        input: [user, call("call_1"), output("call_1")],
+      },
+    } as Parameters<ReturnType<typeof createResponsesPassthroughAdapter>["buildRequest"]>[0], { headers: new Headers() });
+    return (JSON.parse(String(built.body)) as { input: Record<string, unknown>[] }).input;
+  }
+
+  test("the DeepSeek preset reaches the wire with a placeholder on the reasoning-less turn", () => {
+    const provider = { ...providerConfigSeed(getProviderRegistryEntry("deepseek")!), apiKey: "sk-test" };
+    enrichProviderFromRegistry("deepseek", provider);
+    const input = buildWireInput(provider);
+    expect(input.map(item => item.type)).toEqual(["message", "reasoning", "function_call", "function_call_output"]);
+    expect(input[1]).toEqual(placeholder);
+  });
+
+  test("a canonical OpenAI provider receives no inserted reasoning item", () => {
+    const provider = { ...providerConfigSeed(getProviderRegistryEntry("openai-apikey")!), apiKey: "sk-test" };
+    const input = buildWireInput(provider);
+    expect(input.map(item => item.type)).toEqual(["message", "function_call", "function_call_output"]);
+  });
+});
+
 describe("DeepSeek Responses replay keeps reasoning on the wire", () => {
   function buildBody(provider: OcxProviderConfig): Record<string, unknown> {
     const built = createResponsesPassthroughAdapter(provider).buildRequest({
